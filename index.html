@@ -1,16 +1,29 @@
-<!DOCTYPE html>
+# Create the requested index.html file with color picker functionality and a black background.
+code_content = """<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Super Smooth Hand Drawing</title>
+    <title>Hand Tracking - Neon Tekenbord</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
-        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid #333; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; }
+        
+        /* UI Elementen */
+        .ui-container { position: absolute; top: 20px; left: 20px; z-index: 20; background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white; }
+        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid #444; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; }
         video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        button { cursor: pointer; padding: 10px 15px; border: none; border-radius: 5px; background: #333; color: white; margin-top: 10px; display: block; width: 100%; }
+        button:hover { background: #555; }
     </style>
 </head>
 <body>
+
+    <div class="ui-container">
+        <label for="colorPicker">Kies kleur:</label>
+        <input type="color" id="colorPicker" value="#00ffcc">
+        <button id="clearBtn">Wis Scherm</button>
+    </div>
 
     <canvas id="canvas"></canvas>
     <div class="webcam-container"><video id="webcam" autoplay muted playsinline></video></div>
@@ -22,9 +35,15 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const video = document.getElementById('webcam');
+        const colorPicker = document.getElementById('colorPicker');
+        const clearBtn = document.getElementById('clearBtn');
         
         let paths = [];
         let currentPath = [];
+        let currentColor = '#00ffcc';
+
+        colorPicker.addEventListener('input', (e) => currentColor = e.target.value);
+        clearBtn.addEventListener('click', () => { paths = []; currentPath = []; });
 
         function resize() { 
             canvas.width = window.innerWidth; 
@@ -35,11 +54,10 @@
 
         function onResults(results) {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const finger = results.multiHandLandmarks[0][8]; // Wijsvinger top
-                // Omdat de webcam gespiegeld is, gebruiken we (1 - finger.x)
+                const finger = results.multiHandLandmarks[0][8];
                 const x = (1 - finger.x) * canvas.width;
                 const y = finger.y * canvas.height;
-                currentPath.push({x, y});
+                currentPath.push({x, y, color: currentColor});
             } else {
                 if (currentPath.length > 0) {
                     paths.push(currentPath);
@@ -49,22 +67,23 @@
         }
 
         function draw() {
-            // Subtiel fade-effect voor de lichtspoor-look
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            // Zwarte achtergrond
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.strokeStyle = '#00ffcc';
             ctx.lineWidth = 8;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = '#00ffcc';
 
             const allPaths = [...paths, currentPath];
 
             allPaths.forEach(path => {
                 if (path.length < 2) return;
                 ctx.beginPath();
+                ctx.strokeStyle = path[0].color;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = path[0].color;
+                
                 ctx.moveTo(path[0].x, path[0].y);
                 
                 for (let i = 1; i < path.length - 1; i++) {
@@ -85,26 +104,24 @@
         hands.setOptions({ 
             maxNumHands: 1, 
             modelComplexity: 1,
-            minDetectionConfidence: 0.6, 
-            minTrackingConfidence: 0.6 
+            minDetectionConfidence: 0.7, 
+            minTrackingConfidence: 0.7 
         });
         
         hands.onResults(onResults);
 
         const camera = new Camera(video, {
-            onFrame: async () => {
-                await hands.send({ image: video });
-            },
+            onFrame: async () => await hands.send({ image: video }),
             width: 640,
             height: 480
         });
         
-        camera.start().catch(err => {
-            console.error("Kon de camera niet starten:", err);
-            alert("Controleer of je webcam is aangesloten en geef toestemming in je browser.");
-        });
-
+        camera.start();
         draw();
     </script>
 </body>
 </html>
+"""
+
+with open("index.html", "w") as f:
+    f.write(code_content)
