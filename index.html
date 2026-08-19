@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Tracking Tekenen</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        h1 {
+            margin-bottom: 10px;
+            font-size: 1.5rem;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* Spiegelt de webcam voor een natuurlijke ervaring */
+        }
+    </style>
+
+    <!-- MediaPipe Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <h1>Steek je wijsvinger uit om te tekenen!</h1>
+    <div class="container">
+        <video id="webcam" autoplay></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        let points = [];
+
+        function onResults(results) {
+            // Wis het canvas voor elk nieuw frame
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Teken de webcamfeed op het canvas (gespiegeld)
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // Landmark 8 is het tipje van je wijsvinger
+                const indexFingerTip = landmarks[8];
+                
+                // Converteer normalisatie-coördinaten naar canvas pixels
+                const x = indexFingerTip.x * canvasElement.width;
+                const y = indexFingerTip.y * canvasElement.height;
+
+                // Voeg punt toe aan onze lijn-historie
+                points.push({ x: x, y: y });
+
+                // Beperk de lengte van de lijn tot maximaal 50 punten
+                if (points.length > 50) {
+                    points.shift();
+                }
+            } else {
+                // Als er geen hand te zien is, laat de lijn langzaam verdwijnen
+                if (points.length > 0) {
+                    points.shift();
+                }
+            }
+
+            // Teken de lijnen op basis van de opgeslagen punten
+            if (points.length > 1) {
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(points[0].x, points[0].y);
+                for (let i = 1; i < points.length; i++) {
+                    canvasCtx.lineTo(points[i].x, points[i].y);
+                }
+                canvasCtx.strokeStyle = '#00ffcc';
+                canvasCtx.lineWidth = 6;
+                canvasCtx.lineCap = 'round';
+                canvasCtx.stroke();
+            }
+
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480
+        });
+
+        camera.start();
+    </script>
+</body>
+</html>
