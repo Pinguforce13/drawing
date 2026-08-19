@@ -2,172 +2,81 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hand Tracking Tekenen - Zwart Scherm</title>
+    <title>Super Smooth Hand Drawing</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background: #000; /* Volledig zwarte achtergrond voor je tekening */
-            color: #fff;
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
-        }
-        h1 {
-            position: absolute;
-            top: 15px;
-            margin: 0;
-            font-size: 1.2rem;
-            color: #888;
-            z-index: 10;
-            pointer-events: none;
-        }
-        /* Het hoofdcansvasscherm vult de pagina waar je op tekent */
-        #drawing_canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #050505;
-        }
-        /* Klein webcamvenster rechtsonder in de hoek */
-        .webcam-container {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            width: 160px;
-            height: 120px;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.8);
-            z-index: 10;
-            background: #222;
-        }
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1); /* Spiegeling voor natuurlijke beweging */
-        }
+        body { margin: 0; background: #000; overflow: hidden; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
+        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid #333; z-index: 10; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
     </style>
-
-    <!-- MediaPipe Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <h1>Steek je wijsvinger uit om op het zwarte scherm te tekenen!</h1>
-    
-    <!-- Het grote teken canvas -->
-    <canvas id="drawing_canvas"></canvas>
+    <canvas id="canvas"></canvas>
+    <div class="webcam-container"><video id="webcam" autoplay muted></video></div>
 
-    <!-- Klein webcamvoorbeeld rechtsonder -->
-    <div class="webcam-container">
-        <video id="webcam" autoplay muted></video>
-    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 
     <script>
-        const videoElement = document.getElementById('webcam');
-        const canvasElement = document.getElementById('drawing_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('webcam');
+        
+        let paths = []; // Array van lijnen
+        let currentPath = [];
 
-        // Zorg dat het canvas automatisch schaalt naar de schermgrootte
-        function resizeCanvas() {
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
-        let points = [];
+        function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        window.addEventListener('resize', resize);
+        resize();
 
         function onResults(results) {
-            // Wis het scherm niet volledig bij elk frame, zodat je tekening blijft staan!
-            // Wil je dat lijnen langzaam wegtrikken? Verander dan de backgroundkleur alpha of haal de clearRect weg.
-            // Voor een zuiver zwart tekenvel wissen we subtiel of tekenen we direct:
-            
-            // We wissen het hoofdcansvasscherm volledig per frame zodat de lijn je vinger volgt,
-            // MAAR we bewaren een langere historie van punten zodat je complete lijnen krijgt!
-            canvasCtx.fillStyle = '#050505';
-            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
-
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                const indexFingerTip = landmarks[8]; // Topje wijsvinger
-                
-                // Schaal de handcoördinaten van het kleine camerabereik naar het volledige scherm
-                const x = (1 - indexFingerTip.x) * canvasElement.width; // 1 - x omdat de camera spiegelt
-                const y = indexFingerTip.y * canvasElement.height;
-
-                // Voeg punt toe
-                points.push({ x: x, y: y });
-
-                // Langere historie voor langere lijnen (bijv. 100 punten)
-                if (points.length > 100) {
-                    points.shift();
-                }
+                const finger = results.multiHandLandmarks[0][8];
+                const x = (1 - finger.x) * canvas.width;
+                const y = finger.y * canvas.height;
+                currentPath.push({x, y});
             } else {
-                // Als je hand uit beeld is, laat de lijn geleidelijk inkrimpen
-                if (points.length > 0) {
-                    points.shift();
-                }
-            }
-
-            // Teken alle opgeslagen punten als een vloeiende neonlijn
-            if (points.length > 1) {
-                canvasCtx.beginPath();
-                canvasCtx.moveTo(points[0].x, points[0].y);
-                for (let i = 1; i < points.length; i++) {
-                    canvasCtx.lineTo(points[i].x, points[i].y);
-                }
-                canvasCtx.strokeStyle = '#00ffcc';
-                canvasCtx.lineWidth = 8;
-                canvasCtx.lineCap = 'round';
-                canvasCtx.lineJoin = 'round';
-                
-                // Voeg een mooie neon gloed toe
-                canvasCtx.shadowBlur = 15;
-                canvasCtx.shadowColor = '#00ffcc';
-                
-                canvasCtx.stroke();
-                
-                // Reset shadow zodat het niet sloom wordt
-                canvasCtx.shadowBlur = 0;
+                if (currentPath.length > 0) paths.push(currentPath);
+                currentPath = [];
             }
         }
 
-        const hands = new Hands({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }
-        });
+        // De "Render Loop" voor extreme smoothness
+        function draw() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'; // Subtiel fade effect
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.7
-        });
+            ctx.strokeStyle = '#00ffcc';
+            ctx.lineWidth = 8;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00ffcc';
 
+            // Teken oude paden en het huidige pad
+            [...paths, currentPath].forEach(path => {
+                if (path.length < 2) return;
+                ctx.beginPath();
+                ctx.moveTo(path[0].x, path[0].y);
+                
+                // Beziér curves zorgen voor de vloeiende bochten
+                for (let i = 1; i < path.length - 2; i++) {
+                    const xc = (path[i].x + path[i + 1].x) / 2;
+                    const yc = (path[i].y + path[i + 1].y) / 2;
+                    ctx.quadraticCurveTo(path[i].x, path[i].y, xc, yc);
+                }
+                ctx.stroke();
+            });
+            requestAnimationFrame(draw);
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8 });
         hands.onResults(onResults);
 
-        const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({ image: videoElement });
-            },
-            width: 640,
-            height: 480
-        });
-
-        camera.start();
+        new Camera(video, { onFrame: async () => await hands.send({ image: video }), width: 640, height: 480 }).start();
+        draw();
     </script>
 </body>
 </html>
