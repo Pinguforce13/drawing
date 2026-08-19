@@ -1,80 +1,136 @@
-# Create the requested index.html file with color picker functionality and a black background.
-code_content = """<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Hand Tracking - Neon Tekenbord</title>
+    <title>Hand Tracking - Tekenen, Gommen & Skelet</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
         
         /* UI Elementen */
-        .ui-container { position: absolute; top: 20px; left: 20px; z-index: 20; background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white; }
-        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid #444; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .ui-container { position: absolute; top: 20px; left: 20px; z-index: 20; background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white; backdrop-filter: blur(5px); }
+        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 200px; height: 150px; border: 2px solid #00ffcc; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; box-shadow: 0 0 15px rgba(0,255,204,0.3); }
         
-        button { cursor: pointer; padding: 10px 15px; border: none; border-radius: 5px; background: #333; color: white; margin-top: 10px; display: block; width: 100%; }
+        /* Video en het overliggende canvas voor het hand-skelet */
+        .cam-wrapper { position: relative; width: 100%; height: 100%; }
+        video, #webcam_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        button, input[type="color"] { cursor: pointer; padding: 8px 12px; border: none; border-radius: 5px; background: #333; color: white; margin-top: 8px; display: block; width: 100%; font-weight: bold; }
         button:hover { background: #555; }
+        #modeBtn { background: #00ffcc; color: #000; }
     </style>
 </head>
 <body>
 
     <div class="ui-container">
-        <label for="colorPicker">Kies kleur:</label>
+        <label for="colorPicker">Kleur:</label>
         <input type="color" id="colorPicker" value="#00ffcc">
+        <button id="modeBtn">Modus: Tekenen</button>
         <button id="clearBtn">Wis Scherm</button>
     </div>
 
+    <!-- Hoofd teken canvas -->
     <canvas id="canvas"></canvas>
-    <div class="webcam-container"><video id="webcam" autoplay muted playsinline></video></div>
 
+    <!-- Webcam container met futuristisch skelet -->
+    <div class="webcam-container">
+        <div class="cam-wrapper">
+            <video id="webcam" autoplay muted playsinline></video>
+            <canvas id="webcam_canvas"></canvas>
+        </div>
+    </div>
+
+    <!-- MediaPipe Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const video = document.getElementById('webcam');
+        const webcamCanvas = document.getElementById('webcam_canvas');
+        const webcamCtx = webcamCanvas.getContext('2d');
+        
         const colorPicker = document.getElementById('colorPicker');
         const clearBtn = document.getElementById('clearBtn');
-        
+        const modeBtn = document.getElementById('modeBtn');
+
         let paths = [];
         let currentPath = [];
         let currentColor = '#00ffcc';
+        let isEraser = false;
 
+        // UI besturing
         colorPicker.addEventListener('input', (e) => currentColor = e.target.value);
         clearBtn.addEventListener('click', () => { paths = []; currentPath = []; });
+        
+        modeBtn.addEventListener('click', () => {
+            isEraser = !isEraser;
+            if (isEraser) {
+                modeBtn.innerText = "Modus: GOMMEN";
+                modeBtn.style.background = "#ff4444";
+                modeBtn.style.color = "#fff";
+            } else {
+                modeBtn.innerText = "Modus: Tekenen";
+                modeBtn.style.background = "#00ffcc";
+                modeBtn.style.color = "#000";
+            }
+        });
 
         function resize() { 
             canvas.width = window.innerWidth; 
             canvas.height = window.innerHeight; 
+            webcamCanvas.width = 200;
+            webcamCanvas.height = 150;
         }
         window.addEventListener('resize', resize);
         resize();
 
         function onResults(results) {
+            // 1. Teken het futuristische hand-skelet op het kleine webcam-canvas
+            webcamCtx.save();
+            webcamCtx.clearRect(0, 0, webcamCanvas.width, webcamCanvas.height);
+            webcamCtx.drawImage(results.image, 0, 0, webcamCanvas.width, webcamCanvas.height);
+
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const finger = results.multiHandLandmarks[0][8];
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // Teken het skelet met een sci-fi groene gloed
+                drawConnectors(webcamCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 2});
+                drawLandmarks(webcamCtx, landmarks, {color: '#ff0055', lineWidth: 1, radius: 3});
+
+                const finger = landmarks[8]; // Wijsvinger top
                 const x = (1 - finger.x) * canvas.width;
                 const y = finger.y * canvas.height;
-                currentPath.push({x, y, color: currentColor});
+
+                if (isEraser) {
+                    // Gom-logica: Verwijder paden die dicht bij de vinger komen
+                    paths = paths.filter(path => {
+                        return !path.some(p => Math.hypot(p.x - x, p.y - y) < 30);
+                    });
+                } else {
+                    currentPath.push({x, y, color: currentColor});
+                }
             } else {
-                if (currentPath.length > 0) {
+                if (currentPath.length > 0 && !isEraser) {
                     paths.push(currentPath);
                     currentPath = [];
                 }
             }
+            webcamCtx.restore();
         }
 
         function draw() {
-            // Zwarte achtergrond
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+            // Zwarte achtergrond met lichtspoor effect
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.lineWidth = 8;
+            ctx.lineWidth = isEraser ? 40 : 8;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
 
+            // Als we aan het gommen zijn, laat dan een rode cirkel zien bij je vinger als indicator (optioneel, of we tekenen de paden)
             const allPaths = [...paths, currentPath];
 
             allPaths.forEach(path => {
@@ -121,7 +177,3 @@ code_content = """<!DOCTYPE html>
     </script>
 </body>
 </html>
-"""
-
-with open("index.html", "w") as f:
-    f.write(code_content)
