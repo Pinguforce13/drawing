@@ -127,9 +127,9 @@
                     return d < 0.25;
                 });
 
-                // Check Pinch: strengere grens zodat je bewust moet 'knijpen' (kleinere afstand)
+                // Check Pinch
                 const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-                const isPinching = pinchDistance < 0.045; // Strenger gemaakt
+                const isPinching = pinchDistance < 0.045;
 
                 if (isFist) {
                     statusText.innerText = "Status: Vuist (Pauze)";
@@ -139,7 +139,6 @@
                     }
                     grabbedPathIndex = null;
                 } else if (isPinching) {
-                    // Als we nog niets vast hadden, pak de lijn op
                     if (grabbedPathIndex === null) {
                         for (let i = 0; i < paths.length; i++) {
                             let hit = paths[i].some(p => Math.hypot(p.x - x, p.y - y) < 45);
@@ -164,12 +163,10 @@
                         statusText.innerText = "Status: Knijpen (Geen lijn geraakt)";
                     }
                 } else {
-                    // Vingers zijn OPEN -> Als we iets vast hadden, laten we het nu DIRECT los
                     if (grabbedPathIndex !== null) {
                         grabbedPathIndex = null;
                     }
 
-                    // Voeg een kleine vertraging/buffer toe zodat hij niet direct begint te tekenen als je opent
                     if (pinchDistance > 0.08) { 
                         if (isEraser) {
                             statusText.innerText = "Status: Gommen";
@@ -182,6 +179,10 @@
                         }
                     } else {
                         statusText.innerText = "Status: Neutraal";
+                        if (currentPath.length > 0 && !isEraser) {
+                            paths.push(currentPath);
+                            currentPath = [];
+                        }
                     }
                 }
             } else {
@@ -209,14 +210,14 @@
             allPaths.forEach((path, index) => {
                 if (path.length < 2) return;
                 ctx.beginPath();
-                ctx.strokeStyle = path[0].color;
+                ctx.strokeStyle = path[0].color || currentColor;
                 
                 if (index === grabbedPathIndex) {
                     ctx.shadowBlur = 35;
-                    ctx.shadowColor = '#ffffff'; // Oplichtend wit als je 'm vast hebt
+                    ctx.shadowColor = '#ffffff';
                 } else {
                     ctx.shadowBlur = 15;
-                    ctx.shadowColor = path[0].color;
+                    ctx.shadowColor = path[0].color || currentColor;
                 }
                 
                 ctx.moveTo(path[0].x, path[0].y);
@@ -246,13 +247,15 @@
         hands.onResults(onResults);
 
         const camera = new Camera(video, {
-            onFrame: async () => await hands.send({ image: video }),
+            onFrame: async () => {
+                await hands.send({ image: video });
+            },
             width: 640,
             height: 480
         });
         
         camera.start();
-        draw();
+        draw(); // Start de animatieloop direct op
     </script>
 </body>
 </html>
