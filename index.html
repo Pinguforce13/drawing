@@ -2,22 +2,21 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Hand Tracking - Tekenen, Gommen & Skelet</title>
+    <title>Hand Tracking - Tekenen, Gommen, Vuist & Grab</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
         
-        /* UI Elementen */
         .ui-container { position: absolute; top: 20px; left: 20px; z-index: 20; background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white; backdrop-filter: blur(5px); }
         .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 200px; height: 150px; border: 2px solid #00ffcc; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; box-shadow: 0 0 15px rgba(0,255,204,0.3); }
         
-        /* Video en het overliggende canvas voor het hand-skelet */
         .cam-wrapper { position: relative; width: 100%; height: 100%; }
         video, #webcam_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         
         button, input[type="color"] { cursor: pointer; padding: 8px 12px; border: none; border-radius: 5px; background: #333; color: white; margin-top: 8px; display: block; width: 100%; font-weight: bold; }
         button:hover { background: #555; }
         #modeBtn { background: #00ffcc; color: #000; }
+        .status { margin-top: 10px; font-size: 0.85rem; color: #ffcc00; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -27,12 +26,11 @@
         <input type="color" id="colorPicker" value="#00ffcc">
         <button id="modeBtn">Modus: Tekenen</button>
         <button id="clearBtn">Wis Scherm</button>
+        <div id="statusText" class="status">Status: Klaar</div>
     </div>
 
-    <!-- Hoofd teken canvas -->
     <canvas id="canvas"></canvas>
 
-    <!-- Webcam container met futuristisch skelet -->
     <div class="webcam-container">
         <div class="cam-wrapper">
             <video id="webcam" autoplay muted playsinline></video>
@@ -40,7 +38,6 @@
         </div>
     </div>
 
-    <!-- MediaPipe Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -55,15 +52,19 @@
         const colorPicker = document.getElementById('colorPicker');
         const clearBtn = document.getElementById('clearBtn');
         const modeBtn = document.getElementById('modeBtn');
+        const statusText = document.getElementById('statusText');
 
         let paths = [];
         let currentPath = [];
         let currentColor = '#00ffcc';
         let isEraser = false;
 
-        // UI besturing
+        // Variabelen voor het verplaatsen (Dragen/Vastpakken) van lijnen
+        let grabbedPathIndex = null;
+        let lastGrabCenter = null;
+
         colorPicker.addEventListener('input', (e) => currentColor = e.target.value);
-        clearBtn.addEventListener('click', () => { paths = []; currentPath = []; });
+        clearBtn.addEventListener('click', () => { paths = []; currentPath = []; grabbedPathIndex = null; });
         
         modeBtn.addEventListener('click', () => {
             isEraser = !isEraser;
@@ -88,7 +89,6 @@
         resize();
 
         function onResults(results) {
-            // 1. Teken het futuristische hand-skelet op het kleine webcam-canvas
             webcamCtx.save();
             webcamCtx.clearRect(0, 0, webcamCanvas.width, webcamCanvas.height);
             webcamCtx.drawImage(results.image, 0, 0, webcamCanvas.width, webcamCanvas.height);
@@ -96,33 +96,83 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 
-                // Teken het skelet met een sci-fi groene gloed
                 drawConnectors(webcamCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 2});
                 drawLandmarks(webcamCtx, landmarks, {color: '#ff0055', lineWidth: 1, radius: 3});
 
-                const finger = landmarks[8]; // Wijsvinger top
-                const x = (1 - finger.x) * canvas.width;
-                const y = finger.y * canvas.height;
+                const thumbTip = landmarks[4];
+                const indexTip = landmarks[8];
+                
+                // Coördinaten van wijsvinger op hoofdscherm
+                const x = (1 - indexTip.x) * canvas.width;
+                const y = indexTip.y * canvas.height;
 
-                if (isEraser) {
-                    // Gom-logica: Verwijder paden die dicht bij de vinger komen
-                    paths = paths.filter(path => {
-                        return !path.some(p => Math.hypot(p.x - x, p.y - y) < 30);
-                    });
+                // 1. Check op Vuist: Als de topjes van vingers (8, 12, 16, 20) dicht bij de pols (0) zitten -> Vuist!
+                const wrist = landmarks[0];
+                const isFist = [8, 12, 16, 20].every(tipIdx => {
+                    let d = Math.hypot(landmarks[tipIdx].x - wrist.x, landmarks[tipIdx].y - wrist.y);
+                    return d < 0.25; // Als ze dichtbij zijn
+                });
+
+                // 2. Check op "Pinch" (Duim + Wijsvinger tegen elkaar aan voor 'Vastpakken')
+                const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+                const isPinching = pinchDistance < 0.05;
+
+                if (isFist) {
+                    statusText.innerText = "Status: Vuist (Niet tekenen)";
+                    if (currentPath.length > 0) {
+                        paths.push(currentPath);
+                        currentPath = [];
+                    }
+                    grabbedPathIndex = null;
+                } else if (isPinching) {
+                    statusText.innerText = "Status: Lijn vastpakken & verplaatsen!";
+                    
+                    // Als we nog geen lijn vast hadden, zoek de dichtstbijzijnde lijn
+                    if (grabbedPathIndex === null) {
+                        for (let i = 0; i < paths.length; i++) {
+                            let hit = paths[i].some(p => Math.hypot(p.x - x, p.y - y) < 40);
+                            if (hit) {
+                                grabbedPathIndex = i;
+                                lastGrabCenter = {x, y};
+                                break;
+                            }
+                        }
+                    } else {
+                        // Verplaats de hele gekozen lijn op basis van handbeweging
+                        let dx = x - lastGrabCenter.x;
+                        let dy = y - lastGrabCenter.y;
+                        paths[grabbedPathIndex].forEach(p => {
+                            p.x += dx;
+                            p.y += dy;
+                        });
+                        lastGrabCenter = {x, y};
+                    }
                 } else {
-                    currentPath.push({x, y, color: currentColor});
+                    // Normale modus (Tekenen of Gommen)
+                    grabbedPathIndex = null;
+                    
+                    if (isEraser) {
+                        statusText.innerText = "Status: Gommen";
+                        paths = paths.filter(path => {
+                            return !path.some(p => Math.hypot(p.x - x, p.y - y) < 30);
+                        });
+                    } else {
+                        statusText.innerText = "Status: Tekenen";
+                        currentPath.push({x, y, color: currentColor});
+                    }
                 }
             } else {
+                statusText.innerText = "Status: Geen hand in beeld";
                 if (currentPath.length > 0 && !isEraser) {
                     paths.push(currentPath);
                     currentPath = [];
                 }
+                grabbedPathIndex = null;
             }
             webcamCtx.restore();
         }
 
         function draw() {
-            // Zwarte achtergrond met lichtspoor effect
             ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -130,15 +180,21 @@
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
 
-            // Als we aan het gommen zijn, laat dan een rode cirkel zien bij je vinger als indicator (optioneel, of we tekenen de paden)
             const allPaths = [...paths, currentPath];
 
-            allPaths.forEach(path => {
+            allPaths.forEach((path, index) => {
                 if (path.length < 2) return;
                 ctx.beginPath();
                 ctx.strokeStyle = path[0].color;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = path[0].color;
+                
+                // Geef een extra heldere gloed als je de lijn momenteel vast hebt
+                if (index === grabbedPathIndex) {
+                    ctx.shadowBlur = 30;
+                    ctx.shadowColor = '#ffffff';
+                } else {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = path[0].color;
+                }
                 
                 ctx.moveTo(path[0].x, path[0].y);
                 
