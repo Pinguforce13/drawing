@@ -2,16 +2,17 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Hand Tracking - Tekenen, Gommen, Vuist & Grab</title>
+    <title>Hand Tracking - Glazen Tekenbord & Grab</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
+        
+        /* Achtergrond canvas (hier komt de camera / hand op de achtergrond) */
+        #bgCanvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); object-fit: cover; z-index: 1; opacity: 0.25; }
+        
+        /* Hoofd teken canvas (staat boven de achtergrond) */
+        #canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
         
         .ui-container { position: absolute; top: 20px; left: 20px; z-index: 20; background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white; backdrop-filter: blur(5px); }
-        .webcam-container { position: absolute; bottom: 20px; right: 20px; width: 200px; height: 150px; border: 2px solid #00ffcc; border-radius: 8px; overflow: hidden; z-index: 10; background: #111; box-shadow: 0 0 15px rgba(0,255,204,0.3); }
-        
-        .cam-wrapper { position: relative; width: 100%; height: 100%; }
-        video, #webcam_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         
         button, input[type="color"] { cursor: pointer; padding: 8px 12px; border: none; border-radius: 5px; background: #333; color: white; margin-top: 8px; display: block; width: 100%; font-weight: bold; }
         button:hover { background: #555; }
@@ -29,15 +30,14 @@
         <div id="statusText" class="status">Status: Klaar</div>
     </div>
 
+    <!-- Achtergrond video/canvas voor het camerabeeld doorzichtig op de achtergrond -->
+    <video id="webcam" autoplay muted playsinline style="display:none;"></video>
+    <canvas id="bgCanvas"></canvas>
+
+    <!-- Hoofd teken canvas -->
     <canvas id="canvas"></canvas>
 
-    <div class="webcam-container">
-        <div class="cam-wrapper">
-            <video id="webcam" autoplay muted playsinline></video>
-            <canvas id="webcam_canvas"></canvas>
-        </div>
-    </div>
-
+    <!-- MediaPipe Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -46,8 +46,9 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const video = document.getElementById('webcam');
-        const webcamCanvas = document.getElementById('webcam_canvas');
-        const webcamCtx = webcamCanvas.getContext('2d');
+        
+        const bgCanvas = document.getElementById('bgCanvas');
+        const bgCtx = bgCanvas.getContext('2d');
         
         const colorPicker = document.getElementById('colorPicker');
         const clearBtn = document.getElementById('clearBtn');
@@ -59,7 +60,6 @@
         let currentColor = '#00ffcc';
         let isEraser = false;
 
-        // Variabelen voor het verplaatsen (Dragen/Vastpakken) van lijnen
         let grabbedPathIndex = null;
         let lastGrabCenter = null;
 
@@ -82,63 +82,71 @@
         function resize() { 
             canvas.width = window.innerWidth; 
             canvas.height = window.innerHeight; 
-            webcamCanvas.width = 200;
-            webcamCanvas.height = 150;
+            bgCanvas.width = window.innerWidth;
+            bgCanvas.height = window.innerHeight;
         }
         window.addEventListener('resize', resize);
         resize();
 
         function onResults(results) {
-            webcamCtx.save();
-            webcamCtx.clearRect(0, 0, webcamCanvas.width, webcamCanvas.height);
-            webcamCtx.drawImage(results.image, 0, 0, webcamCanvas.width, webcamCanvas.height);
+            // 1. Teken de camera + hand-skelet op de achtergrond (semi-transparant)
+            bgCtx.save();
+            bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+            bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 
-                drawConnectors(webcamCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 2});
-                drawLandmarks(webcamCtx, landmarks, {color: '#ff0055', lineWidth: 1, radius: 3});
+                // Futuristisch hand-skelet op de achtergrond
+                drawConnectors(bgCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 3});
+                drawLandmarks(bgCtx, landmarks, {color: '#ff0055', lineWidth: 1, radius: 4});
 
                 const thumbTip = landmarks[4];
                 const indexTip = landmarks[8];
                 
-                // Coördinaten van wijsvinger op hoofdscherm
-                const x = (1 - indexTip.x) * canvas.width;
-                const y = indexTip.y * canvas.height;
+                // Middenpunt tussen duim en wijsvinger (waar je 't vastpakt)
+                const pinchX = (thumbTip.x + indexTip.x) / 2;
+                const pinchY = (thumbTip.y + indexTip.y) / 2;
 
-                // 1. Check op Vuist: Als de topjes van vingers (8, 12, 16, 20) dicht bij de pols (0) zitten -> Vuist!
+                const x = (1 - pinchX) * canvas.width;
+                const y = pinchY * canvas.height;
+
+                const indexScreenX = (1 - indexTip.x) * canvas.width;
+                const indexScreenY = indexTip.y * canvas.height;
+
+                // Check vuist
                 const wrist = landmarks[0];
                 const isFist = [8, 12, 16, 20].every(tipIdx => {
                     let d = Math.hypot(landmarks[tipIdx].x - wrist.x, landmarks[tipIdx].y - wrist.y);
-                    return d < 0.25; // Als ze dichtbij zijn
+                    return d < 0.25;
                 });
 
-                // 2. Check op "Pinch" (Duim + Wijsvinger tegen elkaar aan voor 'Vastpakken')
+                // Check Pinch (Vingers bij elkaar = vastpakken)
                 const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-                const isPinching = pinchDistance < 0.05;
+                const isPinching = pinchDistance < 0.06;
 
                 if (isFist) {
-                    statusText.innerText = "Status: Vuist (Niet tekenen)";
+                    statusText.innerText = "Status: Vuist (Pauze)";
                     if (currentPath.length > 0) {
                         paths.push(currentPath);
                         currentPath = [];
                     }
                     grabbedPathIndex = null;
                 } else if (isPinching) {
-                    statusText.innerText = "Status: Lijn vastpakken & verplaatsen!";
-                    
-                    // Als we nog geen lijn vast hadden, zoek de dichtstbijzijnde lijn
+                    // Als we nog niets vast hadden, pak de lijn op waar je vingers precies omheen zitten
                     if (grabbedPathIndex === null) {
                         for (let i = 0; i < paths.length; i++) {
-                            let hit = paths[i].some(p => Math.hypot(p.x - x, p.y - y) < 40);
+                            let hit = paths[i].some(p => Math.hypot(p.x - x, p.y - y) < 45);
                             if (hit) {
                                 grabbedPathIndex = i;
                                 lastGrabCenter = {x, y};
                                 break;
                             }
                         }
-                    } else {
-                        // Verplaats de hele gekozen lijn op basis van handbeweging
+                    }
+
+                    if (grabbedPathIndex !== null) {
+                        statusText.innerText = "Status: Lijn vast (Tussen vingers)";
                         let dx = x - lastGrabCenter.x;
                         let dy = y - lastGrabCenter.y;
                         paths[grabbedPathIndex].forEach(p => {
@@ -146,19 +154,23 @@
                             p.y += dy;
                         });
                         lastGrabCenter = {x, y};
+                    } else {
+                        statusText.innerText = "Status: Geen lijn onder vingers";
                     }
                 } else {
-                    // Normale modus (Tekenen of Gommen)
-                    grabbedPathIndex = null;
-                    
+                    // Vingers zijn OPEN -> Loslaten en normaal tekenen/gommen
+                    if (grabbedPathIndex !== null) {
+                        grabbedPathIndex = null; // Laat los zodra je vingers opent!
+                    }
+
                     if (isEraser) {
                         statusText.innerText = "Status: Gommen";
                         paths = paths.filter(path => {
-                            return !path.some(p => Math.hypot(p.x - x, p.y - y) < 30);
+                            return !path.some(p => Math.hypot(p.x - indexScreenX, p.y - indexScreenY) < 30);
                         });
                     } else {
                         statusText.innerText = "Status: Tekenen";
-                        currentPath.push({x, y, color: currentColor});
+                        currentPath.push({x: indexScreenX, y: indexScreenY, color: currentColor});
                     }
                 }
             } else {
@@ -169,10 +181,11 @@
                 }
                 grabbedPathIndex = null;
             }
-            webcamCtx.restore();
+            bgCtx.restore();
         }
 
         function draw() {
+            // Subtiel spoor op het tekenveld
             ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -187,10 +200,9 @@
                 ctx.beginPath();
                 ctx.strokeStyle = path[0].color;
                 
-                // Geef een extra heldere gloed als je de lijn momenteel vast hebt
                 if (index === grabbedPathIndex) {
-                    ctx.shadowBlur = 30;
-                    ctx.shadowColor = '#ffffff';
+                    ctx.shadowBlur = 35;
+                    ctx.shadowColor = '#ffffff'; // Oplichtend wit wanneer je het tussen je vingers hebt
                 } else {
                     ctx.shadowBlur = 15;
                     ctx.shadowColor = path[0].color;
