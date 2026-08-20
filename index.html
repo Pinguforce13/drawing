@@ -69,6 +69,9 @@
 
         let grabbedPathIndex = null;
         let lastGrabCenter = null;
+        
+        // Sla de actuele hand-landmarks op om ze op het hoofdcanvas te tekenen
+        let latestLandmarks = null;
 
         colorPicker.addEventListener('input', (e) => currentColor = e.target.value);
         clearBtn.addEventListener('click', () => { paths = []; currentPath = []; grabbedPathIndex = null; });
@@ -102,6 +105,7 @@
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
+                latestLandmarks = landmarks; // Sla op voor het hoofdcanvas
                 
                 // Teken hand-skelet in het kleine venster
                 drawConnectors(webcamCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 2});
@@ -186,6 +190,7 @@
                     }
                 }
             } else {
+                latestLandmarks = null;
                 statusText.innerText = "Status: Geen hand in beeld";
                 if (currentPath.length > 0 && !isEraser) {
                     paths.push(currentPath);
@@ -196,11 +201,60 @@
             webcamCtx.restore();
         }
 
+        // Functie om de hand op het grote hoofdcanvas te tekenen
+        function drawHandOverlay(landmarks) {
+            ctx.save();
+            
+            // Teken de verbindingen (botten)
+            HAND_CONNECTIONS.forEach(([i, j]) => {
+                const p1 = landmarks[i];
+                const p2 = landmarks[j];
+                
+                const x1 = (1 - p1.x) * canvas.width;
+                const y1 = p1.y * canvas.height;
+                const x2 = (1 - p2.x) * canvas.width;
+                const y2 = p2.y * canvas.height;
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = 'rgba(0, 255, 204, 0.25)'; // Transparant neon groen
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#00ffcc';
+                ctx.stroke();
+            });
+
+            // Teken de gewrichten (knooppunten)
+            landmarks.forEach((lm, idx) => {
+                const x = (1 - lm.x) * canvas.width;
+                const y = lm.y * canvas.height;
+
+                ctx.beginPath();
+                ctx.arc(x, y, idx === 8 ? 8 : 4, 0, Math.PI * 2); // Wijsvingertop extra groot
+                
+                if (idx === 8) {
+                    ctx.fillStyle = '#ff0055'; // Wijsvingertop felrood/roze markeren
+                    ctx.shadowColor = '#ff0055';
+                    ctx.shadowBlur = 15;
+                } else {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.shadowColor = '#ffffff';
+                    ctx.shadowBlur = 5;
+                }
+                
+                ctx.fill();
+            });
+
+            ctx.restore();
+        }
+
         function draw() {
             // Zwarte achtergrond met lichtspoor
             ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // Teken de opgeslagen tekenlijnen
             ctx.lineWidth = isEraser ? 40 : 8;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
@@ -229,6 +283,11 @@
                 }
                 ctx.stroke();
             });
+
+            // Teken het hand-skelet op het grote canvas als de hand zichtbaar is
+            if (latestLandmarks) {
+                drawHandOverlay(latestLandmarks);
+            }
 
             requestAnimationFrame(draw);
         }
